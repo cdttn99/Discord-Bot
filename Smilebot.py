@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 import asyncio
 from fuzzywuzzy import fuzz
-from datetime import timedelta
+import datetime
 import subprocess
 from dotenv import load_dotenv
 import os
@@ -15,6 +15,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+LOG_FILE = "/opt/minecraft/ServerFiles-4.5/logs/latest.log"
 
 @bot.event
 async def  on_ready():
@@ -69,12 +70,12 @@ async def timeout(ctx, member: discord.Member, duration: str, *, reason ="no rea
     except ValueError:
         await ctx.send("Invalid Time")
         return
-
+    
     time_map = {'s': 'seconds', 'm': 'minutes', 'h': 'hours'}
     if time_unit not in time_map:
         await ctx.send("Invalid time unit. Use `s`, `m`, or `h`.")
         return
-
+    
     kwargs = {time_map[time_unit]: time_value}
     delta = timedelta(**kwargs)
 
@@ -95,12 +96,32 @@ async def Restartmc(ctx):
     try:
         await ctx.send("Restarting Server")
         subprocess.run(["sudo", "systemctl", "stop", "minecraftserver.service"])
+        subprocess.run(["sudo", "rm", "-f", "/opt/minecraft/ServerFiles-4.5/logs/latest.log"])
         await asyncio.sleep(5)
         subprocess.run(["sudo", "systemctl", "start", "minecraftserver.service"])
-        await asyncio.sleep(120)
-        await ctx.send("Minecraft Server is alive")
-    except:
-        await ctx.send("Unable to Complete task. Are you an admin?")
+        server_ready = await wait_for_server_ready(ctx, timeout=180)
+        if server_ready:
+            await ctx.send("Minecraft Server is alive!")
+        else:
+            await ctx.send("Timed out waiting for the server to start.")
+
+    except Exception as e:
+        await ctx.send(f"Unable to complete task. Error: {str(e)}")
+
+async def wait_for_server_ready(ctx, timeout=180):
+    start_time = datetime.datetime.now()
+    deadline = start_time + datetime.timedelta(seconds=timeout)
+    seen_lines = set()
+
+    while datetime.datetime.now() < deadline:
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                if line not in seen_lines:
+                    seen_lines.add(line)
+                    if "Dedicated server took" in line:
+                        return True
+    return False
 
 @timeout.error
 async def timeout_error(ctx, error):
